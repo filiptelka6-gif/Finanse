@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>Net Worth Command Center</title>
+<!--
+ JAK URUCHOMIĆ PWA NA TELEFONIE
+ 1. Wrzuć networth.html (nie zmieniaj nazwy) na hosting HTTPS, np. GitHub Pages / Netlify.
+ 2. Obok utwórz plik sw.js (Service Worker nie może być osadzony w HTML – przeglądarki wymagają osobnego pliku):
+    const C='nw-v1';
+    self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(['./networth.html'])));self.skipWaiting()});
+    self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;
+      e.respondWith(fetch(e.request).then(r=>{const k=r.clone();caches.open(C).then(c=>c.put(e.request,k));return r}).catch(()=>caches.match(e.request)))});
+ 3. Android/Chrome: menu ⋮ → "Zainstaluj aplikację". iOS/Safari: Udostępnij → "Do ekranu początkowego".
+ 4. Manifest jest generowany w kodzie (init). Dane zostają wyłącznie w localStorage tego urządzenia.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<style>
+/* Motywy: zmienne CSS (data-theme na <body>) */
+[data-theme=dark]{--bg:#090b0f;--card:#11141a;--raised:#181c24;--tx:#eceff4;--mu:#8b93a3;--ac:#6b8aff;--ac2:#2de2a6;--onac:#090b0f;--bd:#242a35;--dn:#e5484d}
+[data-theme=grey]{--bg:#eceef1;--card:#ffffff;--raised:#f4f5f7;--tx:#14171c;--mu:#6b7280;--ac:#14171c;--ac2:#6b7280;--onac:#ffffff;--bd:#d8dce2;--dn:#d6343b}
+[data-theme=cyber]{--bg:#0a0514;--card:#120a22;--raised:#1a0f30;--tx:#e8f7ff;--mu:#8f7fb3;--ac:#ff2bd6;--ac2:#00f0ff;--onac:#0a0514;--bd:#2d1856;--dn:#ff3b6b}
+html{overflow-x:hidden}
+body{background:var(--bg);color:var(--tx);font-family:'Inter',system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow-x:hidden;overscroll-behavior-y:contain;-webkit-tap-highlight-color:transparent;padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(76px + env(safe-area-inset-bottom)) env(safe-area-inset-left);transition:background .4s,color .4s}
+/* siatka w tle: rozmywa się ku dołowi */
+body::before{content:'';position:fixed;inset:0;z-index:-1;background-image:linear-gradient(var(--bd) 1px,transparent 1px),linear-gradient(90deg,var(--bd) 1px,transparent 1px);background-size:36px 36px;opacity:.35;-webkit-mask-image:linear-gradient(#000,transparent 60%);mask-image:linear-gradient(#000,transparent 60%)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}}
+@keyframes pop{from{opacity:0;transform:scale(.6)}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin:10px 0;animation:rise .4s cubic-bezier(.2,.8,.2,1) backwards}
+.card:nth-child(2){animation-delay:.05s}.card:nth-child(3){animation-delay:.1s}.card:nth-child(4){animation-delay:.15s}.card:nth-child(5){animation-delay:.2s}.card:nth-child(n+6){animation-delay:.25s}
+.num-xl{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:40px;line-height:1.05;letter-spacing:-.02em;cursor:pointer}
+.lbl,.muted{color:var(--mu)}.lbl{font-size:12px;font-weight:600}
+input,select,textarea{background:var(--raised);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;width:100%;color:inherit;font:inherit;font-size:15px;min-height:40px;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--ac);box-shadow:0 0 0 2px color-mix(in srgb,var(--ac) 28%,transparent)}
+input[type=number]{-moz-appearance:textfield}input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+option{color:#000}
+.btn{background:var(--ac);color:var(--onac);border-radius:10px;padding:10px 14px;font-weight:600;min-height:40px}
+button{transition:transform .12s,opacity .15s}button:active{transform:scale(.94)}
+.ac{color:var(--ac)}.up{color:#22c993}.dn{color:var(--dn)}[data-theme=cyber] .up{color:#00f0ff}
+.bar{height:6px;border-radius:3px;background:var(--ac);transition:width 1s cubic-bezier(.2,.8,.2,1)}
+circle.prog{transition:stroke-dashoffset 1.6s cubic-bezier(.2,.8,.2,1)}
+.chip{border:1px solid var(--bd);background:var(--raised);padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600;animation:pop .4s backwards}
+header{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1px solid var(--bd)}
+header button{width:38px;height:38px;border:1px solid var(--bd);border-radius:10px;background:var(--card);flex:none}
+.dot{width:8px;height:8px;border-radius:50%;background:#94a3b8;flex:none}.dot.live{background:#22c993;box-shadow:0 0 8px #22c993}.dot.cache{background:#f5b84a}.dot.off{background:var(--dn)}
+/* przeciąganie do usunięcia: czerwone tło jedzie razem z kartą */
+.swp{position:relative}.swp::after{content:'Usuń';position:absolute;left:calc(100% + 6px);top:0;bottom:0;width:100vw;background:var(--dn);color:#fff;font-weight:700;display:flex;align-items:center;padding-left:18px;border-radius:12px}
+/* dolny pasek: płaski, ze wskaźnikiem na górnej krawędzi */
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--bd);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:40}
+nav i{position:absolute;top:-1px;left:0;width:20%;height:2px;background:var(--ac);transition:transform .4s cubic-bezier(.3,1.2,.5,1)}
+nav button{flex:1;padding:9px 0 8px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--mu)}
+nav button.on{color:var(--tx)}nav button.on svg{stroke:var(--ac)}
+nav svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));width:54px;height:54px;border-radius:16px;background:var(--ac);color:var(--onac);font-size:28px;line-height:1;box-shadow:0 6px 20px #0006;z-index:45;animation:pop .4s}
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,16px);background:var(--raised);color:var(--tx);border:1px solid var(--bd);padding:10px 16px;border-radius:10px;font-weight:600;opacity:0;pointer-events:none;transition:.3s cubic-bezier(.3,1.3,.5,1);z-index:60;box-shadow:0 8px 30px #0008}
+.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+@media(prefers-reduced-motion:reduce){*,::before{animation:none!important;transition:none!important}}
+</style></head>
+<body x-data="app()" x-init="init()" :data-theme="ui.theme" class="min-h-screen text-sm">
+
+<!-- EKRAN BLOKADY PIN -->
+<div x-show="locked" class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3" style="background:var(--bg)">
+ <div class="text-lg">Wpisz PIN</div>
+ <input type="password" inputmode="numeric" maxlength="4" x-model="pin" @input="tryPin()" class="w-32 text-center text-2xl">
+</div>
+
+<div class="max-w-xl mx-auto px-2" x-show="d">
+<!-- NAGŁÓWEK: profil, tryb prywatny, odświeżanie, motyw -->
+<header class="flex items-center gap-1 py-2 px-2 -mx-2">
+ <select :value="db.cur" @change="sw($event.target.value)"><template x-for="n in Object.keys(db.p)"><option x-text="n" :selected="n==db.cur"></option></template></select>
+ <button @click="addProf()">＋</button>
+ <button @click="ui.secret=!ui.secret" title="Tryb prywatny">👁</button>
+ <button @click="refresh(true)" title="Odśwież kursy i ceny" :class="busy&&'animate-spin'">⟳</button>
+ <select x-model="ui.theme" class="w-24"><option value="dark">Giełda</option><option value="grey">Szary</option><option value="cyber">Cyberpunk</option></select>
+</header>
+<div class="text-xs opacity-80 flex items-center gap-2 py-1"><span class="dot" :class="st"></span><span x-text="status"></span></div>
+
+<!-- PULPIT -->
+<section x-show="tab=='dash'">
+ <button x-show="ip" class="btn w-full mt-2" @click="inst()">📲 Zainstaluj aplikację na telefonie</button>
+ <div x-show="empty" class="card text-center"><div class="text-3xl">👋</div><b>Witaj!</b><p class="text-xs opacity-80 my-2">Dodaj pierwszą pozycję w zakładce Majątek albo zobacz, jak to działa, na przykładowych danych.</p><button class="btn" @click="demo()">Wczytaj dane przykładowe</button></div>
+ <div class="card hero">
+  <div class="flex items-center justify-between gap-3">
+   <div class="min-w-0"><div class="lbl">Majątek netto</div>
+    <div class="num-xl" @click="ui.secret=!ui.secret;navigator.vibrate&&navigator.vibrate(8)" x-text="m(disp)"></div>
+    <div class="text-xs font-semibold mt-1" x-show="delta!=null" :class="delta>=0?'up':'dn'" x-text="(delta>=0?'▲ ':'▼ ')+m(Math.abs(delta))+' od '+(lastSnap&&lastSnap.m)"></div>
+    <div class="text-xs muted mt-1">Aktywa <span x-text="m(assets)"></span> · Zobow. <span x-text="m(liab)"></span></div></div>
+   <div class="relative shrink-0" style="width:96px;height:96px">
+    <svg viewBox="0 0 120 120" class="absolute inset-0 -rotate-90"><defs><linearGradient id="g"><stop offset="0" style="stop-color:var(--ac)"/><stop offset="1" style="stop-color:var(--ac2)"/></linearGradient></defs>
+     <circle cx="60" cy="60" r="52" fill="none" stroke="#8883" stroke-width="8"/>
+     <circle class="prog" cx="60" cy="60" r="52" fill="none" stroke="url(#g)" stroke-width="8" stroke-linecap="round" stroke-dasharray="326.7" :stroke-dashoffset="326.7*(1-ring)"/></svg>
+    <div class="absolute inset-0 flex items-center justify-center font-bold" style="font-family:'Space Grotesk'" x-text="(ring*100).toFixed(0)+'%'"></div></div>
+  </div>
+  <div class="mt-3 flex flex-wrap gap-1 items-center"><span class="chip ac" x-text="rank[1]"></span><span class="text-xs muted" x-text="nextRank?'do: '+nextRank[1]:'najwyższa ranga'"></span></div>
+  <div class="flex flex-wrap gap-1 mt-2 text-xs"><template x-for="(a,i) in ach"><span class="chip" :style="'animation-delay:'+i*80+'ms'" x-text="a"></span></template></div>
+ </div>
+ <div class="card"><div class="mx-auto" style="max-width:300px"><canvas id="c1"></canvas></div></div>
+ <div class="card"><div class="flex justify-between items-baseline"><b>Zdrowie finansowe</b><span class="text-xl font-extrabold" :class="hs.s>=70?'up':hs.s>=40?'':'dn'" x-text="hs.s+'/100'"></span></div>
+  <div class="rounded mt-2" style="background:#8884"><div class="bar" :style="'width:'+hs.s+'%'"></div></div>
+  <ul class="text-xs mt-2 space-y-1"><template x-for="t in hs.tips"><li x-text="'• '+t"></li></template></ul></div>
+ <div class="card"><b>Niezależność finansowa (FIRE)</b>
+  <div x-show="fire" class="mt-1"><div class="text-xs opacity-70">Cel = koszty roczne × 25 (zasada 4%)</div><div class="flex justify-between"><span x-text="m(nw)"></span><b x-text="m(fire)"></b></div>
+   <div class="rounded mt-1" style="background:#8884"><div class="bar" :style="'width:'+Math.max(0,Math.min(100,nw/fire*100))+'%'"></div></div><div class="text-xs mt-1" x-text="fireTxt"></div></div>
+  <div x-show="!fire" class="text-xs opacity-70 mt-1">Dodaj koszty stałe w zakładce Majątek, aby policzyć cel.</div></div>
+ <div class="card">
+  <div>Limit IKE <span x-text="new Date().getFullYear()"></span>: <b x-text="m(ikeLim)"></b> (wpłacono: <input type="number" class="w-28 inline" x-model.number="d.ikeDep">)</div>
+  <div class="mt-1 rounded" style="background:#8884"><div class="bar" :style="'width:'+ikePct+'%'"></div></div>
+  <div class="text-xs" x-text="ikePct.toFixed(0)+'% wykorzystane'"></div>
+ </div>
+ <div class="card space-y-1">
+  <div>Poduszka: <b x-text="runway==null?'dodaj koszty stałe':runway.toFixed(1)+' mies. ('+(runway/12).toFixed(1)+' lat)'"></b></div>
+  <div>Podatek Belki (szac., poza IKE + obligacje): <b x-text="m(belka)"></b></div>
+  <div>Dywidendy rocznie: <b x-text="m(dv.g)"></b> brutto, <b x-text="m(dv.n)"></b> netto</div>
+  <div>XIRR: <b x-text="xirr==null?'brak transakcji':xirr.toFixed(2)+'%'"></b></div>
+ </div>
+</section>
+
+<!-- MAJĄTEK: jeden generyczny edytor dla wszystkich kategorii (konfiguracja w S) -->
+<section x-show="tab=='assets'">
+ <div class="flex flex-wrap gap-1"><template x-for="k in Object.keys(S)"><button class="px-2 py-1 rounded text-xs border" :class="sec==k&&'btn'" @click="sec=k" x-text="S[k].t"></button></template></div>
+ <div class="card flex justify-between"><b x-text="S[sec].t"></b><span x-text="sec=='costs'?m(costSum)+' / mies.':m(tot(sec))"></span></div>
+ <div :class="ui.secret&&'blur-sm'">
+ <template x-for="(r,i) in d.rows[sec]" :key="i">
+  <div class="card rowc grid grid-cols-2 gap-2" x-swipe="del(i)"><div class="col-span-2 flex justify-between items-baseline"><b x-text="r.tk||r.nm||(r.ser?r.ser+' · '+r.q+' szt.':'')||'Nowa pozycja'"></b><span class="font-extrabold ac" x-text="sec=='costs'?m(r.amt):m(val(sec,r))"></span></div>
+   <template x-for="f in S[sec].f" :key="f[0]">
+    <label class="text-xs"><span x-text="f[1]"></span>
+     <template x-if="(f[2]||'').includes('|')"><select x-model="r[f[0]]"><template x-for="o in f[2].split('|')"><option x-text="o" :selected="o==r[f[0]]"></option></template></select></template>
+     <template x-if="!(f[2]||'').includes('|')"><input :type="f[2]=='n'?'number':f[2]=='d'?'date':'text'" step="any" x-model="r[f[0]]"></template>
+    </label>
+   </template>
+   <div class="col-span-2 flex justify-between text-xs"><span x-show="sec=='ike'||sec=='reg'" :class="val(sec,r)>=cost(r)?'up':'dn'" x-text="pl(r)"></span><button class="ml-auto opacity-70" @click="del(i)">🗑 usuń</button></div>
+  </div>
+ </template></div>
+ <div x-show="!d.rows[sec].length" class="card text-center opacity-80">Pusto. Dotknij „Dodaj pozycję", aby zacząć.</div>
+ <button class="btn w-full" @click="add()">Dodaj pozycję</button>
+ <p class="text-xs opacity-70 mt-2">Tickery: GPW z końcówką .WA (np. CDR.WA), ETF np. VWCE.DE, krypto samo np. BTC. Ceny odświeża ⟳.</p>
+</section>
+
+<!-- TRANSAKCJE + XIRR -->
+<section x-show="tab=='tx'">
+ <div class="card grid grid-cols-3 gap-1">
+  <input type="date" x-model="newTx.dt"><select x-model="newTx.tp"><option>Kupno</option><option>Sprzedaż</option><option>Wpłata</option></select>
+  <input type="number" placeholder="Kwota PLN" x-model="newTx.amt">
+  <button class="btn col-span-3" @click="if(newTx.amt){d.tx.push({...newTx});newTx.amt=''}">Dodaj transakcję</button>
+ </div>
+ <div class="card">XIRR portfela (IKE + zwykły): <b class="ac" x-text="xirr==null?'za mało danych':xirr.toFixed(2)+'% rocznie'"></b></div>
+ <template x-for="(x,i) in d.tx" :key="i"><div class="card flex justify-between" x-swipe="del(i,'tx')"><span x-text="x.dt+' · '+x.tp"></span><span x-text="m(x.amt)"></span><button @click="del(i,'tx')">🗑</button></div></template>
+</section>
+
+<!-- PLAN: snapshoty, cele, symulator, kalendarz -->
+<section x-show="tab=='plan'">
+ <div class="card"><button class="btn w-full" @click="snap()">Zapisz snapshot majątku (ten miesiąc)</button><canvas id="c2" class="mt-2"></canvas></div>
+ <div class="card"><b>Cele</b>
+  <template x-for="(g,i) in d.goals" :key="i"><div class="mt-2" x-swipe="del(i,'goals')"><div class="flex justify-between"><span x-text="g.n"></span><span x-text="m(g.t)"></span><button @click="del(i,'goals')">🗑</button></div>
+   <div class="rounded" style="background:#8884"><div class="bar" :style="'width:'+Math.max(0,Math.min(100,nw/g.t*100))+'%'"></div></div></div></template>
+  <div class="flex gap-1 mt-2"><input placeholder="Cel" x-model="goalN"><input type="number" placeholder="Kwota" x-model="goalT"><button class="btn" @click="if(goalN&&goalT){d.goals.push({n:goalN,t:+goalT});goalN=goalT=''}">＋</button></div></div>
+ <div class="card"><b>Symulator</b> (start: obecny majątek netto)
+  <label class="block mt-1">Dopłata miesięcznie: <span x-text="m(+sim.m)"></span><input type="range" min="0" max="20000" step="100" x-model="sim.m"></label>
+  <label class="block">Stopa zwrotu rocznie: <span x-text="sim.r+'%'"></span><input type="range" min="0" max="15" step="0.5" x-model="sim.r"></label>
+  <label class="block">Horyzont: <span x-text="sim.y+' lat'"></span><input type="range" min="1" max="40" x-model="sim.y"></label>
+  <div class="mt-1">Po <span x-text="sim.y"></span> latach: <b class="ac" x-text="m(simV)"></b> (wpłacisz łącznie <span x-text="m(sim.m*sim.y*12)"></span>)</div><canvas id="c3" class="mt-2"></canvas></div>
+ <div class="card"><b>Kalendarz finansowy</b>
+  <template x-for="e in cal"><div class="flex justify-between mt-1"><span x-text="e[0].toLocaleDateString('pl-PL')"></span><span x-text="e[1]"></span><span x-text="Math.ceil((e[0]-Date.now())/864e5)+' dni'"></span></div></template></div>
+</section>
+
+<!-- NARZĘDZIA -->
+<section x-show="tab=='tools'">
+ <div class="card"><b>Ile to kosztuje w godzinach pracy?</b>
+  <div class="grid grid-cols-2 gap-1 mt-1"><input type="number" x-model.number="d.rate" placeholder="Stawka netto / h"><input type="number" x-model.number="price" placeholder="Cena zakupu"></div>
+  <div class="mt-1" x-text="d.rate>0&&price>0?(price/d.rate).toFixed(1)+' h pracy ('+(price/d.rate/8).toFixed(1)+' dni po 8 h)':'Podaj stawkę i cenę'"></div></div>
+ <div class="card"><b>Import CSV do rachunków</b><p class="text-xs opacity-70">Wklej wiersze: ticker;nazwa;Akcja/ETF;waluta;sztuki;śr. cena;ike lub zwykły</p>
+  <textarea rows="3" x-model="csv"></textarea><button class="btn mt-1" @click="imp()">Importuj</button>
+  <input type="file" accept=".csv,.txt" class="mt-1" @change="$event.target.files[0]?.text().then(t=>csv=t)"></div>
+ <div class="card space-y-2"><b>Bezpieczeństwo i przypomnienia</b>
+  <div class="flex gap-1"><button class="btn" @click="setPin()">Ustaw / wyłącz PIN</button><button class="btn" @click="notif()">Włącz powiadomienia</button></div>
+  <p class="text-xs opacity-70">PIN blokuje tylko widok; dane w localStorage nie są szyfrowane.</p></div>
+ <div class="card"><b>Założenia obligacji</b><label class="block text-xs">Przyszła inflacja % (do szacunku EDO/ROD od 2. roku)<input type="number" step="0.1" x-model="ui.infl"></label></div>
+ <div class="card"><b>Instalacja na Androidzie</b><p class="text-xs opacity-70">Pobierz pliki PWA i wrzuć je razem z networth.html (bez zmiany nazwy) na hosting HTTPS.</p><button class="btn mt-1" @click="pwaFiles()">Pobierz sw.js, manifest.json i ikony</button></div>
+ <div class="card"><b>Kopia zapasowa</b><div class="flex gap-1 mt-1"><button class="btn" @click="exp()">Eksport JSON</button><input type="file" accept=".json" @change="impj($event)"></div><button class="mt-3 text-xs dn underline" @click="wipe()">Wyczyść dane tego profilu</button></div>
+ <div class="card"><b>Dziennik notatek</b><textarea rows="5" x-model="d.notes"></textarea></div>
+</section>
+</div>
+
+<button x-show="tab=='assets'" class="fab" @click="add()" aria-label="Dodaj pozycję">＋</button>
+<div class="toast" :class="toastT&&'show'" x-text="toastT" @click="undo()"></div>
+<nav><i :style="'transform:translateX('+idx*100+'%)'"></i><template x-for="t in [['dash','Pulpit'],['assets','Majątek'],['tx','Transakcje'],['plan','Plan'],['tools','Narzędzia']]"><button :class="tab==t[0]&&'on'" @click="go(t[0])"><span x-html="ic(t[0])"></span><b x-text="t[1]"></b></button></template></nav>
+
+<script>
+/* ---------- KONFIGURACJA ---------- */
+const IKE={2025:26019,2026:28260};          // limity wpłat na IKE (PLN); dopisz nowy rok po obwieszczeniu ministerstwa
+const RANKS=[[0,'Stażysta Budżetowy','pierwszy krok zrobiony'],[10000,'Oszczędzacz','pierwsze 5 cyfr'],[50000,'Inwestor Junior','poduszka zaczyna rosnąć'],
+ [100000,'Sześciocyfrowiec','pierwsza setka tysięcy'],[250000,'Rekin GPW','ćwierć miliona'],[500000,'Pół-milioner','półmetek do miliona'],
+ [1e6,'Milioner 👑','klub jednego procenta'],[5e6,'Legenda Wall Street','poziom finałowy']];
+// Kategorie: pola [klucz, etykieta, typ]; typ: n=liczba, d=data, 'a|b'=lista, brak=tekst
+const INV=[['tk','Ticker'],['nm','Nazwa'],['ty','Typ','Akcja|ETF'],['cu','Waluta','PLN|USD|EUR'],['q','Liczba sztuk','n'],['avg','Śr. cena zakupu','n'],['px','Cena rynkowa','n'],['dv','Dywidenda % rocznie','n']];
+const S={ike:{t:'IKE',f:INV},reg:{t:'Rachunek zwykły',f:INV},
+ bonds:{t:'Obligacje',f:[['ser','Seria','EDO|ROD'],['dt','Data zakupu','d'],['q','Liczba sztuk (100 zł)','n'],['r','Oprocentowanie 1. roku %','n'],['mg','Marża p.p. (od 2. roku)','n']]},
+ cash:{t:'Konta i gotówka',f:[['nm','Nazwa'],['cu','Waluta','PLN|USD|EUR'],['amt','Kwota','n']]},
+ crypto:{t:'Krypto',f:[['tk','Ticker (BTC)'],['q','Liczba monet','n'],['px','Cena USD','n']]},
+ loans:{t:'Pożyczki',f:[['nm','Z kim'],['dir','Kierunek','Winien mi|Jestem winien'],['amt','Kwota PLN','n']]},
+ alt:{t:'Złoto, pojazdy',f:[['nm','Nazwa'],['ty','Rodzaj','Złoto|Srebro|Pojazd|Inne'],['amt','Wartość PLN (ręcznie)','n'],['pr','Pojazd: cena zakupu','n'],['yr','Pojazd: rok zakupu','n'],['dp','Pojazd: utrata wartości %/rok (puste=12)','n']]},
+ costs:{t:'Koszty stałe',f:[['nm','Nazwa'],['amt','Miesięcznie PLN','n']]}};
+let IP=null,TF=null;const AC=()=>getComputedStyle(document.body).getPropertyValue('--ac').trim();const charts={},today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10); // lokalna data (bez przesunięcia UTC)
+const blank=()=>({rows:{ike:[],reg:[],bonds:[],cash:[],crypto:[],loans:[],alt:[],costs:[]},tx:[],snaps:[],goals:[],notes:'',rate:0,ikeDep:0});
+function mk(id,cfg){const c=document.getElementById(id);if(!c)return;
+ Chart.defaults.color=getComputedStyle(document.body).getPropertyValue('--tx').trim();Chart.defaults.borderColor='#8882';Chart.defaults.font.family="'Inter',system-ui,sans-serif";
+ cfg.options=cfg.options||{};cfg.options.animation=charts[id]?false:{duration:1200,easing:'easeOutQuart'}; // animacja tylko przy pierwszym rysowaniu
+ charts[id]&&charts[id].destroy();charts[id]=new Chart(c,cfg)}
+
+// Ikony dolnego paska (SVG, kolor z currentColor)
+const IC={dash:'<path d="M3 3h8v10H3zM13 3h8v6h-8zM13 11h8v10h-8zM3 15h8v6H3z"/>',assets:'<path d="M3 7h18v13H3zM8 7V4h8v3M3 13h18"/>',tx:'<path d="M17 3l4 4-4 4M21 7H7M7 21l-4-4 4-4M3 17h14"/>',plan:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',tools:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'};
+// Dyrektywa x-swipe="akcja": przeciągnięcie w lewo o >90 px wykonuje akcję (karta odjeżdża, wibracja)
+document.addEventListener('alpine:init',()=>Alpine.directive('swipe',(el,{expression},{evaluateLater})=>{
+ const run=evaluateLater(expression);let x0=0,y0=0,dx=0,on=false;
+ el.addEventListener('touchstart',e=>{x0=e.touches[0].clientX;y0=e.touches[0].clientY;dx=0;on=true;el.style.transition='none'},{passive:true});
+ el.addEventListener('touchmove',e=>{if(!on)return;dx=e.touches[0].clientX-x0;if(dx<0&&Math.abs(dx)>Math.abs(e.touches[0].clientY-y0)){el.classList.add('swp');el.style.transform=`translateX(${dx}px)`}},{passive:true});
+ el.addEventListener('touchend',()=>{if(!on)return;on=false;el.style.transition='transform .22s,opacity .22s';
+  if(dx<-90){el.style.transform='translateX(-110%)';el.style.opacity=0;navigator.vibrate&&navigator.vibrate(15);setTimeout(()=>{run();el.style.transition='none';el.style.transform='';el.style.opacity='';el.classList.remove('swp')},220)}
+  else{el.style.transform='';setTimeout(()=>el.classList.remove('swp'),230)}});
+}));
+// Zaznaczanie zawartości pola liczbowego po dotknięciu (szybkie nadpisywanie)
+addEventListener('focusin',e=>{if(e.target.type=='number')e.target.select()});
+/* ---------- APLIKACJA ---------- */
+function app(){return{
+ S,tab:'dash',sec:'ike',busy:false,disp:0,ring:0,raf:0,st:'',ip:false,toastT:'',locked:false,pin:'',status:'',db:{cur:'',p:{},ui:{}},d:null,ui:{},
+ newTx:{dt:today(),tp:'Kupno',amt:''},goalN:'',goalT:'',csv:'',price:0,sim:{m:2000,r:7,y:20},
+
+ init(){
+  let db;try{db=JSON.parse(localStorage.nw_db)}catch(e){}
+  this.db=db||{cur:'Indywidualny',p:{'Indywidualny':blank(),'Razem / Rodzina':blank()},ui:{theme:'dark',secret:false,pin:'',fx:{USD:4,EUR:4.3},ts:'',last:''}};
+  this.ui=this.db.ui;this.d=this.db.p[this.db.cur];this.locked=!!this.ui.pin;if(this.ui.infl==null)this.ui.infl=3;
+  // Manifest generowany w locie (instalacja PWA; pełna instalacja wymaga HTTPS + sw.js, patrz komentarz na górze)
+  const ic='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#0b0f14"/><path d="M15 70l25-25 15 15 30-35" stroke="#22c55e" stroke-width="9" fill="none"/></svg>');
+  const l=document.createElement('link');l.rel='manifest';
+  l.href=URL.createObjectURL(new Blob([JSON.stringify({name:'Net Worth Command Center',short_name:'NetWorth',display:'standalone',start_url:location.href.split('#')[0],background_color:'#0b0f14',theme_color:'#0b0f14',icons:[{src:ic,sizes:'any',type:'image/svg+xml'}]})],{type:'application/manifest+json'}));
+  fetch('manifest.json',{method:'HEAD'}).then(r=>{if(r.ok)l.href='manifest.json'}).catch(()=>{}).finally(()=>document.head.appendChild(l));
+  if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+  // Zapis do localStorage + odrysowanie wykresów przy każdej zmianie danych
+  this.$watch('db',()=>{localStorage.nw_db=JSON.stringify(this.db);this.$nextTick(()=>this.draw())},{deep:true});
+  this.$watch('tab',()=>this.$nextTick(()=>this.draw()));
+  this.$watch('sim',()=>this.$nextTick(()=>this.draw()),{deep:true});
+  addEventListener('online',()=>this.refresh());
+  this.refresh();this.remind();this.$nextTick(()=>this.draw());
+  this.tween(this.nw);
+  let py=null; // odświeżanie pociągnięciem w dół na samej górze strony
+  addEventListener('touchstart',e=>{py=scrollY<=0?e.touches[0].clientY:null},{passive:true});
+  addEventListener('touchend',e=>{if(py!=null&&e.changedTouches[0].clientY-py>110){navigator.vibrate&&navigator.vibrate(12);this.refresh(true)}py=null});
+  setTimeout(()=>this.ring=this.rp,300);this.$watch('nw',v=>this.tween(v));this.$watch('rp',v=>this.ring=v);
+  this.$watch('rk',(n,o)=>{if(n>o){this.boom();this.ping('Nowa ranga!',this.rank[1])}});
+  const tc=()=>document.querySelector('meta[name=theme-color]').content={dark:'#070b10',grey:'#e8eaee',cyber:'#0d0221'}[this.ui.theme]||'#070b10';tc();this.$watch('ui.theme',tc); // kolor paska statusu Androida
+  addEventListener('beforeinstallprompt',e=>{e.preventDefault();IP=e;this.ip=true});addEventListener('appinstalled',()=>{this.ip=false;this.toast('Zainstalowano ✓')});
+ },
+
+ /* --- wycena --- */
+ m(v){return this.ui.secret?'*****':new Intl.NumberFormat('pl-PL',{style:'currency',currency:'PLN',maximumFractionDigits:0}).format(v||0)},
+ fx(c){return!c||c=='PLN'?1:this.ui.fx[c]||1},
+ yrs(dt){return(Date.now()-new Date(dt))/31557600000},
+ bv(r){ // 1. rok stałe oprocentowanie, dalej inflacja + marża; kapitalizacja roczna, bieżący rok liniowo
+  let v=(+r.q||0)*100,y=Math.max(0,this.yrs(r.dt));
+  for(let i=0;y>0;i++,y--)v*=1+((i?(+this.ui.infl||0)+(+r.mg||0):+r.r||0)/100)*Math.min(1,y);return v},
+ alt(r){const p=+r.pr,Y=new Date().getFullYear(); // pojazd: utrata wartości rok do roku
+  return r.ty=='Pojazd'&&p>0?p*Math.pow(1-(+r.dp||12)/100,Math.max(0,Y-(+r.yr||Y))):+r.amt||0},
+ get ach(){const r=this.d.rows,l=[]; // osiągnięcia
+  if(r.ike.length)l.push('🛡 Konto IKE');if(this.ikePct>=100)l.push('🏆 Pełny limit IKE');if(r.bonds.length)l.push('📜 Obligacje w portfelu');
+  if(this.runway>=6)l.push('🧱 Poduszka 6 mies.');if(this.runway>=12)l.push('🏰 Poduszka 12 mies.');if(this.d.snaps.length>=3)l.push('📈 3 snapshoty');
+  if(this.d.snaps.length>=12)l.push('🗓 Rok snapshotów');if(r.crypto.length)l.push('₿ Krypto');if(this.dv.n>=1000)l.push('💸 1000 zł dywidend');if(this.nw>=1e5)l.push('💯 Sześć cyfr');return l},   // szac. wartość z kapitalizacją roczną
+ cost(r){return(+r.q||0)*(+r.avg||0)*this.fx(r.cu)},
+ val(s,r){const n=x=>+x||0;
+  return s=='ike'||s=='reg'?n(r.q)*n(r.px)*this.fx(r.cu):s=='bonds'?this.bv(r):s=='cash'?n(r.amt)*this.fx(r.cu)
+   :s=='crypto'?n(r.q)*n(r.px)*this.fx('USD'):s=='loans'?(r.dir=='Winien mi'?1:-1)*n(r.amt):s=='alt'?this.alt(r):0},
+ tot(s){return this.d.rows[s].reduce((a,r)=>a+this.val(s,r),0)},
+ get nw(){return Object.keys(S).reduce((a,s)=>a+this.tot(s),0)},
+ get liab(){return this.d.rows.loans.filter(r=>r.dir!='Winien mi').reduce((a,r)=>a+(+r.amt||0),0)},
+ get assets(){return this.nw+this.liab},
+ get costSum(){return this.d.rows.costs.reduce((a,r)=>a+(+r.amt||0),0)},
+ get runway(){return this.costSum>0?this.tot('cash')/this.costSum:null},
+ get ikeLim(){return IKE[new Date().getFullYear()]||IKE[Math.max(...Object.keys(IKE))]},
+ get ikePct(){return Math.max(0,Math.min(100,(+this.d.ikeDep||0)/this.ikeLim*100))},
+ get belka(){ // 19% od zysku poza IKE (netto pozycji) + odsetki od obligacji
+  const g=this.d.rows.reg.reduce((a,r)=>a+this.val('reg',r)-this.cost(r),0);
+  const b=this.d.rows.bonds.reduce((a,r)=>a+this.bv(r)-(+r.q||0)*100,0);return(Math.max(0,g)+Math.max(0,b))*.19},
+ get dv(){let g=0,n=0;for(const s of['ike','reg'])for(const r of this.d.rows[s]){const x=this.val(s,r)*(+r.dv||0)/100;g+=x;n+=s=='ike'?x:x*.81}return{g,n}},
+ get rank(){return[...RANKS].reverse().find(r=>this.nw>=r[0])||RANKS[0]},
+ get simV(){const i=this.sim.r/1200,n=this.sim.y*12,p=+this.sim.m;return Math.max(0,this.nw)*Math.pow(1+i,n)+(i?p*(Math.pow(1+i,n)-1)/i:p*n)},
+ get xirr(){ // stopa zwrotu metodą bisekcji; ostatni przepływ = obecna wartość portfela
+  const f=this.d.tx.map(x=>({t:+new Date(x.dt),a:(x.tp=='Sprzedaż'?1:-1)*(+x.amt||0)})).sort((a,b)=>a.t-b.t);
+  if(!f.length)return null;f.push({t:Date.now(),a:this.tot('ike')+this.tot('reg')});
+  const t0=f[0].t,np=r=>f.reduce((s,x)=>s+x.a/Math.pow(1+r,(x.t-t0)/31557600000),0);
+  let lo=-.99,hi=10;if(np(lo)*np(hi)>0)return null;
+  for(let i=0;i<80;i++){const k=(lo+hi)/2;np(lo)*np(k)<=0?hi=k:lo=k}return(lo+hi)/2*100},
+ get cal(){const e=[],n=new Date(),y=n.getFullYear();
+  this.d.rows.bonds.forEach(r=>{const t=new Date(r.dt);t.setFullYear(t.getFullYear()+(r.ser=='ROD'?12:10));e.push([t,'Wykup '+r.ser+' ('+r.q+' szt.)'])});
+  e.push([new Date(y,11,31),'Koniec roku: limit IKE']);e.push([new Date(y,n.getMonth()+1,0),'Snapshot majątku']);
+  return e.filter(x=>x[0]>=n-864e5).sort((a,b)=>a[0]-b[0])},
+
+ /* --- akcje --- */
+ add(){const r={};S[this.sec].f.forEach(f=>{const t=f[2]||'';r[f[0]]=t=='n'?0:t=='d'?today():t.includes('|')?t.split('|')[0]:''});if(this.sec=='bonds')r.mg=2;this.d.rows[this.sec].push(r);navigator.vibrate&&navigator.vibrate(10);
+  this.$nextTick(()=>{const c=document.querySelectorAll('.rowc');c.length&&c[c.length-1].scrollIntoView({behavior:'smooth',block:'center'})})},
+ snap(){this.boom();this.toast('Snapshot zapisany ✓');const k=today().slice(0,7),s=this.d.snaps.filter(x=>x.m!=k);s.push({m:k,v:Math.round(this.nw)});this.d.snaps=s.sort((a,b)=>a.m<b.m?-1:1)},
+ sw(n){this.db.cur=n;this.d=this.db.p[n];this.$nextTick(()=>this.draw())},
+ addProf(){const n=prompt('Nazwa nowego profilu');if(n&&!this.db.p[n]){this.db.p[n]=blank();this.sw(n)}},
+ imp(){this.csv.split('\n').map(l=>l.split(/[;\t]/).map(x=>x.trim())).filter(c=>c[0]).forEach(c=>{
+  const t=(c[6]||'').toLowerCase()=='ike'?'ike':'reg',p=+(c[5]||'0').replace(',','.')||0;
+  this.d.rows[t].push({tk:c[0],nm:c[1]||'',ty:c[2]||'Akcja',cu:c[3]||'PLN',q:+(c[4]||'0').replace(',','.')||0,avg:p,px:p,dv:0})});this.csv='';this.toast('Zaimportowano ✓')},
+ exp(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(this.db)],{type:'application/json'}));a.download='networth-backup-'+today()+'.json';a.click();this.toast('Kopia zapasowa pobrana ✓')},
+ impj(e){const f=e.target.files[0];if(f)f.text().then(t=>{const x=JSON.parse(t);if(!x.p)return alert('To nie jest kopia zapasowa');this.db=x;this.ui=x.ui;this.d=x.p[x.cur]})},
+
+ /* --- PIN --- */
+ setPin(){const p=prompt('Nowy PIN (4 cyfry). Puste pole wyłącza blokadę.');if(p===null)return;if(p&&!/^\d{4}$/.test(p))return alert('PIN to dokładnie 4 cyfry');this.ui.pin=p?btoa('nw'+p):''},
+ tryPin(){if(this.pin.length<4)return;if(btoa('nw'+this.pin)==this.ui.pin)this.locked=false;this.pin=''},
+
+ /* --- dane na żywo z zabezpieczeniem offline: przy błędzie zostają ostatnie wartości z localStorage --- */
+ async refresh(u){
+  if(!navigator.onLine){this.st='off';if(u)this.toast('Brak internetu');this.status='Offline – dane z pamięci podręcznej'+(this.ui.ts?' (z '+this.ui.ts+')':'');return}
+  let fail=0;this.busy=true;
+  for(const c of['USD','EUR']){try{this.ui.fx[c]=(await(await fetch(`https://api.nbp.pl/api/exchangerates/rates/a/${c}/?format=json`)).json()).rates[0].mid}catch(e){fail++}}
+  for(const s of['ike','reg','crypto'])for(const r of this.d.rows[s])if(r.tk){try{r.px=await this.quote(s=='crypto'?r.tk+'-USD':r.tk)}catch(e){fail++}}
+  if(!fail)this.ui.ts=new Date().toLocaleString('pl-PL');
+  this.busy=false;this.st=fail?'cache':'live';if(u)this.toast(fail?'Część danych niedostępna – pamięć podręczna':'Dane zaktualizowane ✓');this.status=fail?`Część danych niedostępna (${fail}) – używam pamięci podręcznej, ostatnia pełna aktualizacja: ${this.ui.ts||'brak'}`:'Dane na żywo z '+this.ui.ts;
+ },
+ async quote(t){const u='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(t);let j;
+  try{j=await(await fetch(u)).json()}catch(e){j=await(await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(u))).json()} // proxy CORS jako plan B
+  return j.chart.result[0].meta.regularMarketPrice},
+
+ /* --- powiadomienia (lokalne, bez serwera push) --- */
+ async notif(){if(!('Notification' in window))return alert('Ta przeglądarka nie obsługuje powiadomień');
+  if(await Notification.requestPermission()=='granted')this.ping('Powiadomienia włączone','Przypomnimy o snapshotach, limicie IKE i wykupie obligacji.')},
+ ping(t,b){if(!('Notification' in window)||Notification.permission!='granted')return;
+  const f=()=>new Notification(t,{body:b});
+  navigator.serviceWorker?navigator.serviceWorker.getRegistration().then(r=>r?r.showNotification(t,{body:b}):f()).catch(f):f()},
+ remind(){const n=new Date(),k=today();if(this.ui.last==k)return;this.ui.last=k; // najwyżej raz dziennie
+  if(n.getDate()>=25&&!this.d.snaps.some(x=>x.m==k.slice(0,7)))this.ping('Snapshot majątku','Zapisz stan portfela za ten miesiąc.');
+  if(n.getMonth()==11&&this.ikePct<100)this.ping('Limit IKE','Koniec roku: wykorzystano '+this.ikePct.toFixed(0)+'% limitu.');
+  this.cal.filter(e=>e[1].startsWith('Wykup')&&(e[0]-n)/864e5<60).forEach(e=>this.ping('Wykup obligacji',e[1]+' – '+e[0].toLocaleDateString('pl-PL')))},
+
+ /* --- nowe funkcje: powiadomienia w aplikacji, cofanie, zdrowie finansowe, FIRE, dane przykładowe --- */
+ ic(k){return'<svg viewBox="0 0 24 24">'+IC[k]+'</svg>'},
+ arr(k){return k=='goals'?this.d.goals:k=='tx'?this.d.tx:this.d.rows[k]},
+ toast(t,ms){TF=null;navigator.vibrate&&navigator.vibrate(6);this.toastT=t;clearTimeout(this.tt);this.tt=setTimeout(()=>{this.toastT='';TF=null},ms||2200)},
+ undo(){if(TF){TF();TF=null;this.toastT=''}},
+ del(i,k){const a=this.arr(k||this.sec),x=a.splice(i,1)[0];this.toast('Usunięto · dotknij, by cofnąć',4500);TF=()=>a.splice(i,0,x)},
+ async inst(){IP.prompt();await IP.userChoice;IP=null;this.ip=false},
+ pl(r){const c=this.cost(r),g=this.val('reg',r)-c;return c>0?(g>=0?'+':'−')+this.m(Math.abs(g))+' ('+(g/c*100).toFixed(1)+'%)':'brak ceny zakupu'},
+ wipe(){if(confirm('Usunąć wszystkie dane tego profilu? Tego nie da się cofnąć.')){this.db.p[this.db.cur]=blank();this.d=this.db.p[this.db.cur]}},
+ get empty(){return Object.values(this.d.rows).every(a=>!a.length)},
+ get lastSnap(){return this.d.snaps[this.d.snaps.length-1]},
+ get delta(){return this.lastSnap?this.nw-this.lastSnap.v:null},
+ get fire(){return this.costSum>0?this.costSum*12*25:0},
+ get fireTxt(){if(!this.fire)return'';if(this.nw>=this.fire)return'Cel osiągnięty 🎉';
+  const i=this.sim.r/1200,p=+this.sim.m;let v=Math.max(0,this.nw); // czas do celu wg założeń z symulatora
+  for(let n=1;n<=600;n++){v=v*(1+i)+p;if(v>=this.fire)return'Przy '+this.m(p)+'/mies. i '+this.sim.r+'% rocznie: za ok. '+(n/12).toFixed(1)+' lat'}return'Przy tych założeniach cel jest poza horyzontem 50 lat'},
+ get hs(){const r=this.d.rows,t=[];let s=0,rw=this.runway; // wynik 0-100: poduszka, zadłużenie, IKE, dywersyfikacja, regularność
+  if(rw==null)t.push('Dodaj koszty stałe, aby ocenić poduszkę');else{s+=Math.min(30,rw/6*30);if(rw<6)t.push('Poduszka poniżej 6 miesięcy kosztów')}
+  const dr=this.assets>0?this.liab/this.assets:0;s+=20*(1-Math.min(1,dr*3));if(dr>.3)t.push('Zadłużenie powyżej 30% aktywów');
+  s+=this.ikePct/100*20;if(!r.ike.length)t.push('Rozważ IKE (zwolnienie z podatku Belki)');else if(this.ikePct<100)t.push('Niewykorzystany limit IKE: '+this.m(this.ikeLim*(1-this.ikePct/100)));
+  const cats=Object.keys(S).filter(k=>k!='costs'&&k!='loans'&&this.tot(k)>0).length;s+=Math.min(15,cats*5);if(cats<3)t.push('Zdywersyfikuj: mniej niż 3 klasy aktywów');
+  s+=Math.min(15,this.d.snaps.length/6*15);if(this.d.snaps.length<3)t.push('Zapisuj snapshot co miesiąc');
+  const top=Math.max(0,...['ike','reg'].flatMap(k=>r[k].map(x=>this.val(k,x)))),inv=this.tot('ike')+this.tot('reg');if(inv>0&&top/inv>.4)t.push('Jedna pozycja to ponad 40% inwestycji');
+  return{s:Math.round(Math.max(0,Math.min(100,s))),tips:t.length?t:['Wszystko wygląda dobrze 👌']}},
+ demo(){const r=this.d.rows;
+  r.ike.push({tk:'VWCE.DE',nm:'Vanguard FTSE All-World',ty:'ETF',cu:'EUR',q:40,avg:105,px:126,dv:1.6});
+  r.reg.push({tk:'CDR.WA',nm:'CD Projekt',ty:'Akcja',cu:'PLN',q:30,avg:150,px:210,dv:2});
+  r.bonds.push({ser:'EDO',dt:'2024-03-01',q:50,r:5.6,mg:2});
+  r.cash.push({nm:'Konto oszczędnościowe',cu:'PLN',amt:30000},{nm:'Wakacje USD',cu:'USD',amt:1200});
+  r.crypto.push({tk:'BTC',q:.05,px:95000});r.loans.push({nm:'Kuba',dir:'Winien mi',amt:1500});
+  r.alt.push({nm:'Sztabka złota 10 g',ty:'Złoto',amt:4200,pr:0,yr:0,dp:0});
+  r.costs.push({nm:'Czynsz',amt:2200},{nm:'Jedzenie',amt:1500},{nm:'Subskrypcje',amt:150});
+  this.d.ikeDep=12000;this.d.goals.push({n:'Poduszka 12 mies.',t:60000},{n:'Pierwszy milion',t:1e6});
+  const y=new Date();for(let i=5;i>=1;i--){const t=new Date(y.getFullYear(),y.getMonth()-i,1);this.d.snaps.push({m:t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0'),v:Math.round(this.nw*(1-i*.035))})}
+  this.toast('Wczytano dane przykładowe')},
+ /* --- efekty wizualne: licznik, pierścień rangi, konfetti --- */
+ get idx(){return['dash','assets','tx','plan','tools'].indexOf(this.tab)},
+ get nextRank(){return RANKS[RANKS.indexOf(this.rank)+1]},
+ get rk(){return RANKS.indexOf(this.rank)},
+ get rp(){const n=this.nextRank;return n?Math.max(0,Math.min(1,(this.nw-this.rank[0])/(n[0]-this.rank[0]))):1},
+ go(t){this.tab=t;navigator.vibrate&&navigator.vibrate(8);scrollTo({top:0,behavior:'smooth'})},
+ tween(to){const a=this.disp,t0=performance.now();cancelAnimationFrame(this.raf); // płynne dojście liczby do nowej wartości
+  const f=t=>{const k=Math.min(1,(t-t0)/1100);this.disp=a+(to-a)*(1-Math.pow(1-k,4));if(k<1)this.raf=requestAnimationFrame(f)};this.raf=requestAnimationFrame(f)},
+ boom(){if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  const c=document.createElement('canvas');c.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:99';c.width=innerWidth;c.height=innerHeight;document.body.appendChild(c);
+  const x=c.getContext('2d'),P=Array.from({length:90},()=>({x:innerWidth/2,y:innerHeight*.6,vx:(Math.random()-.5)*14,vy:-Math.random()*16-4,r:Math.random()*6+3,h:Math.random()*360,l:1}));
+  const f=()=>{x.clearRect(0,0,c.width,c.height);let n=0;P.forEach(p=>{p.vy+=.45;p.x+=p.vx;p.y+=p.vy;p.l-=.011;if(p.l>0){n++;x.globalAlpha=p.l;x.fillStyle=`hsl(${p.h},90%,60%)`;x.fillRect(p.x,p.y,p.r,p.r*.6)}});n?requestAnimationFrame(f):c.remove()};f()},
+ /* --- pliki PWA do hostingu: sw.js, manifest.json i ikony PNG (generowane na canvasie) --- */
+ pwaFiles(){const dl=(b,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click()};
+  dl(new Blob([`const C='nw-v2';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(['./networth.html'])));self.skipWaiting()});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(r=>{const k=r.clone();caches.open(C).then(c=>c.put(e.request,k));return r}).catch(()=>caches.match(e.request)))});`],{type:'text/javascript'}),'sw.js');
+  dl(new Blob([JSON.stringify({name:'Net Worth Command Center',short_name:'NetWorth',display:'standalone',start_url:'./networth.html',scope:'./',background_color:'#0b0f14',theme_color:'#0b0f14',icons:[192,512].map(s=>({src:`icon-${s}.png`,sizes:s+'x'+s,type:'image/png',purpose:'any'}))},null,1)],{type:'application/json'}),'manifest.json');
+  [192,512].forEach(s=>{const c=document.createElement('canvas');c.width=c.height=s;const x=c.getContext('2d');x.fillStyle='#0b0f14';x.fillRect(0,0,s,s);
+   x.strokeStyle='#22c55e';x.lineWidth=s/11;x.lineJoin='round';x.beginPath();x.moveTo(s*.2,s*.7);x.lineTo(s*.42,s*.48);x.lineTo(s*.58,s*.62);x.lineTo(s*.8,s*.3);x.stroke();c.toBlob(b=>dl(b,`icon-${s}.png`))})},
+ /* --- wykres projekcji: majątek z zyskiem vs same wpłaty --- */
+ drawSim(){const i=this.sim.r/1200,p=+this.sim.m,L=[],A=[],B=[];let v=Math.max(0,this.nw),c=v;
+  for(let y=0;y<=this.sim.y;y++){L.push('rok '+y);A.push(Math.round(v));B.push(Math.round(c));for(let k=0;k<12;k++){v=v*(1+i)+p;c+=p}}
+  mk('c3',{type:'line',data:{labels:L,datasets:[{label:'Z zyskiem',data:A,borderColor:AC(),backgroundColor:AC()+'22',fill:true,pointRadius:0,pointHoverRadius:5,tension:.35},{label:'Same wpłaty',data:B,borderColor:'#8888',borderDash:[4,4]}]},options:{plugins:{tooltip:{enabled:!this.ui.secret}}}})},
+
+ /* --- wykresy --- */
+ draw(){
+  if(this.tab=='dash'){const l=[],v=[];Object.keys(S).forEach(s=>{const t=this.tot(s);if(t>0&&s!='costs'){l.push(S[s].t);v.push(Math.round(t))}});
+   mk('c1',{type:'doughnut',data:{labels:l,datasets:[{data:v,backgroundColor:['#6b8aff','#2de2a6','#f5b84a','#ff6b8b','#a78bfa','#38bdf8','#94a3b8','#fb923c'],borderWidth:0,hoverOffset:10}]},options:{cutout:'70%',plugins:{legend:{position:'bottom'},tooltip:{enabled:!this.ui.secret}}}})}
+  if(this.tab=='plan')this.drawSim();
+  if(this.tab=='plan')mk('c2',{type:'line',data:{labels:this.d.snaps.map(x=>x.m),datasets:[{label:'Majątek netto',data:this.d.snaps.map(x=>x.v),borderColor:AC(),backgroundColor:AC()+'22',fill:true,pointRadius:0,pointHoverRadius:5,tension:.35}]},options:{plugins:{tooltip:{enabled:!this.ui.secret}}}})}
+}}
+</script>
+</body></html>
